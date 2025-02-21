@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace Hengeb\Router;
 
 use Hengeb\Router\AccessDeniedException;
+use Hengeb\Router\Attribute\RequestValue;
 use Hengeb\Router\Exception\InvalidCsrfTokenException;
 use Hengeb\Router\Exception\InvalidRouteException;
 use Hengeb\Router\Exception\InvalidUserDataException;
@@ -53,6 +54,8 @@ class Router {
         $this->addType('int', 'intval');
         $this->addType('bool', 'boolval');
         $this->addType('float', 'floatval');
+        $this->addType(\DateTimeImmutable::class, fn($v) => new \DateTimeImmutable($v));
+        $this->addType(\DateTime::class, fn($v) => new \DateTime($v));
 
         $this->addService(self::class, fn() => $this);
         $this->addService(Request::class, fn() => $this->request);
@@ -123,12 +126,20 @@ class Router {
         return $token;
     }
 
+    private function addCsrfTokenHeader(Response $response): void
+    {
+        $response->headers->set('X-CSRF-Token', $this->createCsrfToken());
+    }
+
     /**
      * @throws AccessDeniedException
      */
     private function checkCsrfToken(): void
     {
         $token = $this->request->getPayload()->get('_csrf_token');
+        if (!$token) {
+            $token = $this->request->headers->get('X-CSRF-Token');
+        }
         $csrfTokens = $this->request->getSession()->get('csrfTokens', []);
         // invalidate tokens after 1 hour
         $csrfTokens = array_filter($csrfTokens, fn($time) => $time + 3600 > time());
@@ -181,6 +192,7 @@ class Router {
             return new Response($e->getMessage() ?: 'submitted data is missing or invalid', 400, $header);
         } else {
             error_log($e->getMessage());
+            error_log($e->getTraceAsString());
             $message = $e->getMessage() ?: 'internal error';
             if ($e->getCode()) {
                 $message .= ' (code: ' . $e->getCode() . ')';
@@ -288,12 +300,33 @@ class Router {
                 continue;
             }
 
-            $type = (string)$parameter->getType();
+            $type = $parameter->getType();
+
+            // inject parameters from request body
+            foreach ($parameter->getAttributes(RequestValue::class) as $attribute) {
+                $requestValue = $attribute->newInstance();
+                $key = $requestValue->name ?: $parameter->getName();
+                $identifier = $requestValue->identifier ?: null;
+
+                $payload = $this->request->getPayload();
+                if (!$payload->has($key)) {
+                    if ($parameter->isOptional()) {
+                        $arg = $parameter->getDefaultValue();
+                    } else {
+                        throw new InvalidUserDataException($key . ' is missing in request body');
+                    }
+                } else {
+                    $retriever = $this->getModelRetriever($type->getName(), $identifier);
+                    $arg = $retriever($payload->get($key));
+                }
+                $args[$parameter->getName()] = $arg;
+                continue 2;
+            }
 
             // inject parameters from path and query string
             if (isset($matches[$parameter->getName()])) {
                 [$identifierName, $match] = $matches[$parameter->getName()];
-                $retriever = $this->getModelRetriever($type, $identifierName);
+                $retriever = $this->getModelRetriever((string)$type, $identifierName);
                 $arg = $retriever($match);
                 if ($arg === null || $arg === []) {
                     throw new NotFoundException();
@@ -302,7 +335,7 @@ class Router {
                 continue;
             // inject services (or throw InvalidArgumentException)
             } else {
-                $args[$parameter->getName()] = $this->getService($type);
+                $args[$parameter->getName()] = $this->getService((string)$type);
             }
         }
         return $args;
@@ -330,6 +363,8 @@ class Router {
         } elseif ($conditions === false) {
             throw new AccessDeniedException('inactive route');
         }
-        return $method->invokeArgs($this->controller, $args);
+        $response = $method->invokeArgs($this->controller, $args);
+        $this->addCsrfTokenHeader($response);
+        return $response;
     }
 }

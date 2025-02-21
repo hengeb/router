@@ -125,6 +125,10 @@ class UserRepository {
 
 Router will look for a method like `findById`, `findOneById`, `getById`, `find`, `getBy('id', ...)` and so on (or replace 'id' by 'username' or however the identifier in the router is called).
 
+## Request value injection
+
+You can use the `RequestValue` attribute to inject a request value (POST or PUT).
+
 ## Service injection
 
 You can tell the Router how to retrieve a service object:
