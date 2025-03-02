@@ -234,6 +234,10 @@ class Router {
 
         // default retriever: $type::getRepository()::getInstance()->{'findBy'.$identifierName}
         try {
+            if (is_subclass_of($type, \BackedEnum::class)) {
+                return fn($value) => $type::from($value);
+            }
+
             $repository = null;
             if (!method_exists($type, 'getRepository')) {
                 throw new \Exception();
@@ -316,7 +320,7 @@ class Router {
                         throw new InvalidUserDataException($key . ' is missing in request body');
                     }
                 } else {
-                    $retriever = $this->getModelRetriever($type->getName(), $identifier);
+                    $retriever = $this->getModelRetriever((string) $type?->getName(), $identifier);
                     $arg = $retriever($payload->get($key));
                 }
                 $args[$parameter->getName()] = $arg;
