@@ -107,23 +107,15 @@ $router->addType(User::class, fn($id) => User::find($id), 'id')
 
 The third parameter is optional. Use it if there are multiple ways to find the target.
 
-Alternatively you can add a `getRepository` method to your model class. The Router object will then try to figure how to get the model.
+Alternatively your model can implement the RetrievabelModel interface that is part of this package.
 
 ```php
-class User {
-    public function getRepository {
-        return UserRepository::class;
-    }
-}
-
-class UserRepository {
-    public function findOneById(int $id): User {
-        ...
+class User implements RetrievableModel {
+    public function retrieveModel($userId): ?static {
+        return UserRepository::getInstance()->findOneById((int)$userId);
     }
 }
 ```
-
-Router will look for a method like `findById`, `findOneById`, `getById`, `find`, `getBy('id', ...)` and so on (or replace 'id' by 'username' or however the identifier in the router is called).
 
 ## Request value injection
 

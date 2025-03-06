@@ -221,6 +221,7 @@ class Router {
     private function getModelRetriever(string $type, ?string $identifierName): callable {
         $best = null;
 
+        // first look for a registered retriever for this type
         foreach ($this->types as [$typeName, $retriever, $identifier]) {
             if ($typeName === $type && $identifier === $identifierName) {
                 return $retriever;
@@ -233,51 +234,15 @@ class Router {
             return $best;
         }
 
-        try {
-            if (is_subclass_of($type, \BackedEnum::class)) {
-                return fn($value) => $type::from($value);
-            }
-
-            if (is_subclass_of($type, RetrievableModel::class)) {
-                return fn($value) => $type::retrieveModel($value, $identifierName);
-            }
-
-            // default retriever: $type::getRepository()::getInstance()->{'findBy'.$identifierName}
-            $repository = null;
-            if (!method_exists($type, 'getRepository')) {
-                throw new \Exception();
-            }
-
-            $repository = [$type, 'getRepository']()::getInstance();
-
-            // findOneById, findOneByUsername etc.
-            $tryMethods = [
-                'findOneBy' . $identifierName, 'getOneBy' . $identifierName,
-                'findBy' . $identifierName, 'getBy' . $identifierName,
-                'findOne', 'getOne',
-                'find', 'get',
-            ];
-
-            foreach ($tryMethods as $methodName) {
-                $retriever = [$repository, $methodName];
-                if (method_exists(...$retriever)) {
-                    $type = (string)(new \ReflectionObject($repository))->getMethod($methodName)->getParameters()[0]->getType();
-                    return ($type === 'int') ? (fn($id) => $retriever(intval($id))) : $retriever;
-                }
-            }
-
-            // findOneBy('id', ...), getOneBy('username', ...) etc.
-            foreach (['findOneBy', 'getOneBy', 'findBy', 'getBy'] as $methodName) {
-                $retriever = [$repository, $methodName];
-                if (method_exists(...$retriever)) {
-                    return fn($value) => $retriever($identifier, $value);
-                }
-            }
-
-            throw new \Exception();
-        } catch (\Exception $e) {
-            throw new \InvalidArgumentException('no retriever found for model ' . $type . ($identifier ? (' identified by $' . $identifierName) : ''));
+        if (is_subclass_of($type, \BackedEnum::class)) {
+            return fn($value) => $type::from($value);
         }
+
+        if (is_subclass_of($type, RetrievableModel::class)) {
+            return fn($value) => $type::retrieveModel($value, $identifierName);
+        }
+
+        throw new \InvalidArgumentException('no retriever found for model ' . $type . ($identifier ? (' identified by $' . $identifierName) : ''));
     }
 
     private function getService(string $className): object {
