@@ -10,6 +10,7 @@ use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
+use Hengeb\Router\Interface\RetrievableModel;
 use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -232,12 +233,16 @@ class Router {
             return $best;
         }
 
-        // default retriever: $type::getRepository()::getInstance()->{'findBy'.$identifierName}
         try {
             if (is_subclass_of($type, \BackedEnum::class)) {
                 return fn($value) => $type::from($value);
             }
 
+            if (is_subclass_of($type, RetrievableModel::class)) {
+                return fn($value) => $type::retrieveModel($value, $identifierName);
+            }
+
+            // default retriever: $type::getRepository()::getInstance()->{'findBy'.$identifierName}
             $repository = null;
             if (!method_exists($type, 'getRepository')) {
                 throw new \Exception();
