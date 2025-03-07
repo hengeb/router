@@ -81,7 +81,7 @@ class MyController extends Controller {
     }
 
     // this route will only match if the method is POST
-    // this will also check for a POST variable _csrf_token and validate it to prevent CSRF attacks
+    // this will also check for a POST variable _csrfToken and validate it to prevent CSRF attacks
     // you can override this by passing `checkCsrfToken: false` to the Route attribute
     // generate the CSRF token with $router->createCsrfToken()
     #[Route('POST /login', allow: true)]

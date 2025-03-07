@@ -137,7 +137,7 @@ class Router {
      */
     private function checkCsrfToken(): void
     {
-        $token = $this->request->getPayload()->get('_csrf_token');
+        $token = $this->request->getPayload()->get('_csrfToken');
         if (!$token) {
             $token = $this->request->headers->get('X-CSRF-Token');
         }
@@ -325,7 +325,7 @@ class Router {
             $this->controller = $controller;
         }
         if ($checkCsrfToken) {
-            $this->checkCsrfToken($this->request->getPayload()->get('_csrf_token'));
+            $this->checkCsrfToken($this->request->getPayload()->get('_csrfToken'));
         }
         $method = new \ReflectionMethod($this->controller, $functionName);
         $args = [...$arguments, ...$this->injectDependencies($method, $matches, skipParameters: count($arguments))];
