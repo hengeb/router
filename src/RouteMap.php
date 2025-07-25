@@ -58,7 +58,7 @@ class RouteMap {
             $path = $directory . DIRECTORY_SEPARATOR . $file;
             if (is_dir($path)) {
                 $files = [...$files, ...$this->collectFiles($path)];
-            } else {
+            } elseif (str_ends_with($path, '.php')) {
                 $files[$path] = filemtime($path);
             }
         }
