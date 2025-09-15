@@ -11,6 +11,8 @@ use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
 use Hengeb\Router\Interface\RetrievableModel;
+use LogicException;
+use OutOfBoundsException;
 use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -259,6 +261,10 @@ class Router {
             if ($method->isStatic()) {
                 return $method->invoke(null);
             }
+        }
+
+        if (!class_exists($className)) {
+            throw new OutOfBoundsException('class "' . $className . '" does not exist');
         }
 
         // default retriever: create new object

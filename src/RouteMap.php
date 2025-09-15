@@ -2,7 +2,13 @@
 declare(strict_types=1);
 namespace Hengeb\Router;
 
+use Hengeb\Router\Attribute\AccessAttribute;
+use Hengeb\Router\Attribute\AllowIf;
+use Hengeb\Router\Attribute\CheckCsrfToken;
+use Hengeb\Router\Attribute\PublicAccess;
+use Hengeb\Router\Attribute\RequireLogin;
 use Hengeb\Router\Attribute\Route;
+use Hengeb\Router\Exception\InvalidRouteException;
 
 /**
  * @author Henrik Gebauer <code@henrik-gebauer.de>
@@ -24,15 +30,23 @@ class RouteMap {
     public function __construct(public string $controllerDir)
     {
         $this->cacheFile = '/tmp/routes.cache.' . hash('xxh3', $controllerDir) . '.php';
-        $this->loadRoutesFromCache();
+    }
+
+    public function setCacheFile(string $cacheFile)
+    {
+        $this->cacheFile = $cacheFile;
+        $this->routes = [];
     }
 
     public function getRoutes(): array
     {
+        if (!$this->routes) {
+            $this->loadRoutesFromCacheOrBuild();
+        }
         return $this->routes;
     }
 
-    private function loadRoutesFromCache(): void
+    private function loadRoutesFromCacheOrBuild(): void
     {
         $files = $this->collectFiles($this->controllerDir);
 
@@ -79,37 +93,74 @@ class RouteMap {
                 return $namespace ? "$namespace\\$class" : $class;
             }
         }
+
+        return '';
     }
 
     private function buildRoutes(array $controllerFiles): void
     {
         $this->routes = [];
-        $classes = array_map(fn($file) => $this->getClassFromFile($file), $controllerFiles);
+        $classes = array_filter(array_map(fn($file) => $this->getClassFromFile($file), $controllerFiles));
 
         foreach ($classes as $classname) {
             $class = new \ReflectionClass($classname);
-            foreach ($class->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-                $routes = $method->getAttributes(Route::class);
-                foreach ($routes as $route) {
-                    $routeInstance = $route->newInstance();
-                    // TODO: combine with Route attribute of the class (CONCATENATE matcher and REPLACE allow)
-                    $this->add($routeInstance->matcher, $classname, $method->name, $routeInstance->allow, $routeInstance->checkCsrfToken);
-                }
-            }
+            $this->addRoutesFromClass($class);
         }
 
         $this->sortRoutes();
     }
 
+    private function addRoutesFromClass(\ReflectionClass $class): void
+    {
+        foreach ($class->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            $checkCsrfTokenAttributes = $method->getAttributes(CheckCsrfToken::class);
+            $checkCsrfToken = count($checkCsrfTokenAttributes)
+                ? $checkCsrfTokenAttributes[0]->newInstance()->check
+                : null;
+
+            $accessAttributes = $method->getAttributes(AccessAttribute::class, \ReflectionAttribute::IS_INSTANCEOF);
+            $accessConditions = [];
+            foreach ($accessAttributes as $accessAttribute) {
+                $accessAttributeInstance = $accessAttribute->newInstance();
+                $accessConditions[] = $accessAttributeInstance::class === AllowIf::class
+                    ? $accessAttributeInstance->allow
+                    : $accessAttributeInstance::class;
+            }
+
+            $routes = $method->getAttributes(Route::class);
+            foreach ($routes as $route) {
+                $routeInstance = $route->newInstance();
+
+                if (count($accessConditions) === 0) {
+                    throw new InvalidRouteException("route `{$routeInstance->matcher}` in `{$class->name}::{$method->name}` has no Access attribute. Use PublicAccess or RestrictedAccess or RequireLogin.");
+                }
+                if (in_array(PublicAccess::class, $accessConditions, true)) {
+                    if (count($accessConditions) > 1) {
+                        throw new InvalidRouteException("route `{$routeInstance->matcher}` in `{$class->name}::{$method->name}` has the PublicAccess attribute and also other Access attributes.");
+                    }
+                    $accessConditions = [];
+                }
+
+                $this->addRoute($routeInstance->matcher, $class->name, $method->name, $accessConditions, $checkCsrfToken);
+            }
+        }
+    }
+
     /**
      * @param $matcher is an (optional) HTTP method and URL path like "GET /path/to/the/resource" or "POST /users/{id}" or "/users/{[0-9]+:id}"
      * @param $controller is the classname of a Controller subclass
-     * @param $functionName is the function in the controller that will be called
-     *                      the function takes the arguments in the same order they appear in the matcher
-     * @param $conditions see Route Attribute constructor
+     * @param $methodName is the method in the controller that will be called
+     *                      the method takes the arguments in the same order they appear in the matcher
+     * @param $accessConditions set by Access attributes
+     * @param ?bool wether or not to check the CSRF token (null = auto)
      */
-    private function add(string $matcher, string $controller, string $functionName, array|bool $conditions, ?bool $checkCsrfToken): void
-    {
+    private function addRoute(
+        string $matcher,
+        string $controller,
+        string $methodName,
+        array $accessConditions,
+        ?bool $checkCsrfToken
+    ): void {
         $httpMethod = 'GET';
         if (str_contains($matcher, ' ')) {
             [$httpMethod, $matcher] = explode(' ', $matcher, 2);
@@ -117,7 +168,7 @@ class RouteMap {
         }
         [$pathPattern, $queryInfo] = $this->createPattern($matcher);
         $checkCsrfToken ??= $httpMethod !== 'GET';
-        $this->routes[$httpMethod . ' ' . $matcher] = [$httpMethod, $pathPattern, $queryInfo, $controller, $functionName, $conditions, $checkCsrfToken];
+        $this->routes[$httpMethod . ' ' . $matcher] = [$httpMethod, $pathPattern, $queryInfo, $controller, $methodName, $accessConditions, $checkCsrfToken];
     }
 
     private function writeCache(): void

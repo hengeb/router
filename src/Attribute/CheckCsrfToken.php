@@ -8,10 +8,8 @@ declare(strict_types=1);
 
 namespace Hengeb\Router\Attribute;
 
-#[\Attribute(\Attribute::TARGET_PARAMETER)]
-class RequestValue {
-    public function __construct(
-        public string $name = '',
-        public string $identifier = '',
-    ) {}
+#[\Attribute(\Attribute::TARGET_METHOD)]
+class CheckCsrfToken
+{
+    public function __construct(public bool $check) {}
 }

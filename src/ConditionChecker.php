@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace Hengeb\Router;
 
+use Hengeb\Router\Attribute\RequireLogin;
 use Hengeb\Router\Exception\AccessDeniedException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
@@ -24,17 +25,12 @@ class ConditionChecker {
 
     /**
      * evaluate the value of a value template of a rule's 'allow' condition
-     * @return [$invert, $value]
+     * @return value
      */
-    private function evaluateValueTemplate(string $template, array $args): array
+    private function evaluateValueTemplate(string $template, array $args): mixed
     {
-        $invert = false;
-        if ($template && $template[0] === '!') {
-            $invert = true;
-            $template = substr($template, 1);
-        }
         if (!$template || $template[0] !== '$') {
-            return [$invert, $template];
+            return $template;
         }
 
         $tokens = token_get_all('<?php ' . $template);
@@ -93,7 +89,7 @@ class ConditionChecker {
                 $value = $arg->$methodName(...$callArgs);
         }
 
-        return [$invert, $value];
+        return $value;
     }
 
     /**
@@ -142,26 +138,45 @@ class ConditionChecker {
      */
     public function check(array $args): void
     {
+        // PublicAccess
         if (!$this->conditions) {
             return;
         }
 
-        foreach ($this->conditions as $propertyName => $valueTemplate) {
-            // create a two-dimensional array of values
-            $valueTemplates = array_map(fn($v) => explode('&', $v), explode('|', (string)$valueTemplate));
-            foreach ($valueTemplates as $conjunction) {
-                $conjunctionMeets = true;
-                foreach ($conjunction as $templateString) {
-                    [$invert, $value] = $this->evaluateValueTemplate($templateString, $args);
-                    $conjunctionMeets &= $this->getValueChecker($propertyName)($value) ^ $invert;
-                    if (!$conjunctionMeets) {
-                        break;
-                    }
+        // RequireLogin
+        if (in_array(RequireLogin::class, $this->conditions, true)) {
+            if (!$this->currentUser->isLoggedIn()) {
+                throw new NotLoggedInException();
+            }
+            // grant access if there are no other conditions
+            if (count($this->conditions) === 1) {
+                return;
+            }
+        }
+
+        // AllowIf
+        $conditions = array_filter($this->conditions, 'is_array');
+        foreach ($conditions as $condition) {
+            foreach ($condition as $propertyName => $valueTemplate) {
+                $negate = false;
+                if ($valueTemplate && $valueTemplate[0] === '!') {
+                    $negate = true;
+                    $valueTemplate = substr($valueTemplate, 1);
                 }
-                if ($conjunctionMeets) {
-                    return;
+
+                $value = $this->evaluateValueTemplate($valueTemplate, $args);
+                $result = $this->getValueChecker($propertyName)($value);
+
+                if ($negate) {
+                    $result = !$result;
+                }
+                if (!$result) {
+                    // condition is not met, continue with next AllowIf
+                    continue 2;
                 }
             }
+            // AllowIf condition was met
+            return;
         }
 
         // none of the conditions was met
