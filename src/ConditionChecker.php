@@ -17,11 +17,8 @@ use Hengeb\Router\Interface\CurrentUserInterface;
  */
 class ConditionChecker {
     public function __construct(
-        private CurrentUserInterface $currentUser,
         private array $conditions
-    )
-    {
-    }
+    ) {}
 
     /**
      * evaluate the value of a value template of a rule's 'allow' condition
@@ -95,39 +92,30 @@ class ConditionChecker {
     /**
      * builds a closure that checks the value of a property of the current user
      */
-    private function getValueChecker(string $propertyName): callable
+    private function getValueChecker(CurrentUserInterface $user, string $propertyName): callable
     {
         foreach (["has$propertyName", "is$propertyName", $propertyName] as $methodName) {
-            if (!method_exists($this->currentUser, $methodName)) {
+            if (!method_exists($user, $methodName)) {
                 continue;
             }
-            $method = new \ReflectionMethod($this->currentUser, $methodName);
+            $method = new \ReflectionMethod($user, $methodName);
             $parameters = $method->getParameters();
             if (count($parameters)) {
                 $type = (string)$parameters[0]->getType();
-                return function ($value) use ($method, $type) {
-                    $value = match($type) {
-                        'int' => intval($value),
-                        'bool' => boolval($value),
-                        default => $value,
-                    };
-                    return $method->invoke($this->currentUser, $value);
-                };
+                return fn($value) => $method->invoke($user, match($type) {
+                    'int' => intval($value),
+                    'bool' => boolval($value),
+                    default => $value,
+                });
             } else {
-                return function ($value) use ($method) {
-                    return $method->invoke($this->currentUser) == $value;
-                };
+                return fn($value) => $method->invoke($user) == $value;
             }
         }
-        if (method_exists($this->currentUser, "get$propertyName")) {
-            return function ($value) use ($propertyName) {
-                return $this->currentUser->{"get$propertyName"}() == $value;
-            };
+        if (method_exists($user, "get$propertyName")) {
+            return fn($value) => $user->{"get$propertyName"}() == $value;
         }
-        if (method_exists($this->currentUser, "get")) {
-            return function ($value) use ($propertyName) {
-                return $this->currentUser->{"get"}($propertyName) == $value;
-            };
+        if (method_exists($user, "get")) {
+            return fn($value) => $user->{"get"}($propertyName) == $value;
         }
         throw new \LogicException("cannot determine value of $propertyName of current user");
     }
@@ -136,7 +124,7 @@ class ConditionChecker {
      * @throws AccessDeniedException none of the conditions is met
      * @throws NotLoggedInException if user is not even logged in
      */
-    public function check(array $args): void
+    public function assertOrThrow(CurrentUserInterface $user, array $args): void
     {
         // PublicAccess
         if (!$this->conditions) {
@@ -145,7 +133,7 @@ class ConditionChecker {
 
         // RequireLogin
         if (in_array(RequireLogin::class, $this->conditions, true)) {
-            if (!$this->currentUser->isLoggedIn()) {
+            if (!$user->isLoggedIn()) {
                 throw new NotLoggedInException();
             }
             // grant access if there are no other conditions
@@ -165,7 +153,7 @@ class ConditionChecker {
                 }
 
                 $value = $this->evaluateValueTemplate($valueTemplate, $args);
-                $result = $this->getValueChecker($propertyName)($value);
+                $result = $this->getValueChecker($user, $propertyName)($value);
 
                 if ($negate) {
                     $result = !$result;
@@ -180,6 +168,6 @@ class ConditionChecker {
         }
 
         // none of the conditions was met
-        throw $this->currentUser->isLoggedIn() ? new AccessDeniedException() : new NotLoggedInException();
+        throw $user->isLoggedIn() ? new AccessDeniedException() : new NotLoggedInException();
     }
 }

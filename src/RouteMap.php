@@ -1,19 +1,19 @@
 <?php
+/**
+ * @author Henrik Gebauer <code@henrik-gebauer.de>
+ * @license https://opensource.org/license/mit MIT
+ */
+
 declare(strict_types=1);
+
 namespace Hengeb\Router;
 
 use Hengeb\Router\Attribute\AccessAttribute;
 use Hengeb\Router\Attribute\AllowIf;
 use Hengeb\Router\Attribute\CheckCsrfToken;
 use Hengeb\Router\Attribute\PublicAccess;
-use Hengeb\Router\Attribute\RequireLogin;
 use Hengeb\Router\Attribute\Route;
 use Hengeb\Router\Exception\InvalidRouteException;
-
-/**
- * @author Henrik Gebauer <code@henrik-gebauer.de>
- * @license https://opensource.org/license/mit MIT
- */
 
 /**
  * collects the routes from the controller classes
@@ -29,7 +29,7 @@ class RouteMap {
 
     public function __construct(public string $controllerDir)
     {
-        $this->cacheFile = '/tmp/routes.cache.' . hash('xxh3', $controllerDir) . '.php';
+        $this->cacheFile = '/tmp/routes.' . hash('xxh3', $controllerDir) . '.cache';
     }
 
     public function setCacheFile(string $cacheFile)
@@ -53,8 +53,9 @@ class RouteMap {
         if (!is_file($this->cacheFile) || max($files) >= filemtime($this->cacheFile)) {
             $this->buildRoutes(array_keys($files));
             $this->writeCache();
+            $this->writeCacheReadable();
         } else {
-            $this->routes = include($this->cacheFile);
+            $this->routes = unserialize(file_get_contents($this->cacheFile));
         }
     }
 
@@ -151,7 +152,7 @@ class RouteMap {
      * @param $controller is the classname of a Controller subclass
      * @param $methodName is the method in the controller that will be called
      *                      the method takes the arguments in the same order they appear in the matcher
-     * @param $accessConditions set by Access attributes
+     * @param $accessConditions configured by attributes
      * @param ?bool wether or not to check the CSRF token (null = auto)
      */
     private function addRoute(
@@ -159,7 +160,7 @@ class RouteMap {
         string $controller,
         string $methodName,
         array $accessConditions,
-        ?bool $checkCsrfToken
+        ?bool $checkCsrfToken,
     ): void {
         $httpMethod = 'GET';
         if (str_contains($matcher, ' ')) {
@@ -174,7 +175,14 @@ class RouteMap {
     private function writeCache(): void
     {
         $fp = fopen($this->cacheFile, 'w');
-        fwrite($fp, '<?php return ' . var_export($this->routes, true) . ';');
+        fwrite($fp, serialize($this->routes));
+        fclose($fp);
+    }
+
+    private function writeCacheReadable(): void
+    {
+        $fp = fopen($this->cacheFile . '.php', 'w');
+        fwrite($fp, "<?php\nreturn " . var_export($this->routes, true) . ";");
         fclose($fp);
     }
 
@@ -194,7 +202,7 @@ class RouteMap {
     private function substituteNamedParametersInMatcher(string $matcher): string {
         $matcher = preg_replace('/\{([^:]+?)\}/', '(?P<$1>[^\/]*?)', $matcher);
         $matcher = preg_replace('/\{(.+?):(.+?)\}/', '(?P<$2>$1)', $matcher);
-        $matcher = preg_replace('/\(\?P\<(.+?)=\>(.+?)\>/', '(?P<$2__$1>', $matcher);
+        $matcher = preg_replace('/\(\?P\<(.+?)=\>(.+?)\>/', '(?P<$2__identifiedBy__$1>', $matcher);
         return $matcher;
     }
 
