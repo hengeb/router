@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace Hengeb\Router;
 
+use Hengeb\Router\Enum\ResponseType;
 use Hengeb\Router\Exception\AccessDeniedException;
 use Hengeb\Router\Exception\InvalidCsrfTokenException;
 use Hengeb\Router\Exception\InvalidRouteException;
@@ -15,6 +16,7 @@ use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,9 +36,9 @@ class Router {
      * @var Array<callable|string[]>
      */
     private array $exceptionHandlers = [];
-
-    private ?object $controller = null;
     private ?\Exception $exception = null;
+
+    private ?ResponseType $responseType = null;
 
     public function __construct(string $controllerDir)
     {
@@ -57,7 +59,8 @@ class Router {
                     $this->request->setSession(new Session());
                 }
                 return $this->request->getSession();
-            });
+            })
+            ->addService(ResponseType::class, fn() => $this->responseType);
     }
 
     public function addType(string $type, callable $retriever, ?string $identifierName = null): self
@@ -102,16 +105,16 @@ class Router {
                     $this->checkCsrfToken($this->request->getPayload()->get('_csrfToken'));
                 }
 
-                $this->controller = $this->dependencyInjector->createObject($controllerName);
+                $controller = $this->dependencyInjector->createObject($controllerName);
                 $conditionChecker = new ConditionChecker($accessConditions);
 
-                $response = $this->call($this->controller, $functionName, $matches, $conditionChecker);
+                $response = $this->call($controller, $functionName, $matches, $conditionChecker);
                 $this->addCsrfTokenHeader($response);
                 return $response;
             }
             throw new InvalidRouteException();
         } catch (\Exception $e) {
-            return $this->handleException($e);
+            return $this->handleException($controller ?? null, $e);
         }
     }
 
@@ -155,14 +158,14 @@ class Router {
         $session->set('csrfTokens', $csrfTokens);
     }
 
-    private function handleException(\Exception $e): Response
+    private function handleException(?object $controller, \Exception $e): Response
     {
         $this->exception = $e;
 
         // stop possible output buffering (e.g. if the exception was thrown during the rendering of a template)
         ob_end_clean();
-        if ($this->controller && method_exists($this->controller, 'handleException')) {
-            return $this->call($this->controller, 'handleException');
+        if ($controller && method_exists($controller, 'handleException')) {
+            return $this->call($controller, 'handleException');
         }
 
         foreach ($this->exceptionHandlers as $exceptionClass => $handler) {
@@ -185,27 +188,29 @@ class Router {
     private function defaultExceptionHandler(\Exception $e): Response
     {
         $header = ['Content-Type' => 'text/plain; charset=utf-8'];
-        if ($e instanceof InvalidRouteException) {
-            return new Response($e->getMessage() ?: 'path not found', 404, $header);
-        } elseif ($e instanceof NotLoggedInException) {
-            return new Response($e->getMessage() ?: 'login required', 401, $header);
-        } elseif ($e instanceof NotFoundException) {
-            return new Response($e->getMessage() ?: 'resource not found', 404, $header);
-        } elseif ($e instanceof AccessDeniedException) {
-            return new Response($e->getMessage() ?: 'permission required', 403, $header);
-        } elseif ($e instanceof InvalidCsrfTokenException) {
-            return new Response($e->getMessage() ?: 'request cannot be repeated', 400, $header);
-        } elseif ($e instanceof InvalidUserDataException) {
-            return new Response($e->getMessage() ?: 'submitted data is missing or invalid', 400, $header);
-        } else {
-            error_log($e->getMessage());
-            error_log($e->getTraceAsString());
-            $message = $e->getMessage() ?: 'internal error';
+
+        [$message, $responseCode] = match (true) {
+            $e instanceof InvalidRouteException => ['path not found', 404],
+            $e instanceof NotLoggedInException => ['login required', 401],
+            $e instanceof NotFoundException => ['resource not found', 404],
+            $e instanceof AccessDeniedException => ['permission required', 403],
+            $e instanceof InvalidCsrfTokenException => ['request cannot be repeated', 400],
+            $e instanceof InvalidUserDataException => ['submitted data is missing or invalid', 400],
+            default => (function () use ($e): array {
+                error_log($e->getMessage());
+                error_log($e->getTraceAsString());
+                return ['internal error', 500];
+            })(),
+        };
+
+        if ($e->getMessage()) {
+            $message = $e->getMessage();
             if ($e->getCode()) {
                 $message .= ' (code: ' . $e->getCode() . ')';
             }
-            return new Response($message, 500, $header);
         }
+
+        return new Response($message, $responseCode, $header);
     }
 
     public function call(
@@ -218,6 +223,13 @@ class Router {
             $controller = $this->dependencyInjector->createObject($controller);
         }
         $method = new \ReflectionMethod($controller, $functionName);
+        if (!$this->responseType) {
+            $this->responseType = match ((string) $method->getReturnType()) {
+                JsonResponse::class => ResponseType::Json,
+                default => ResponseType::Html,
+            };
+        }
+
         $args = $this->dependencyInjector->getFunctionArguments($method, $matches);
         if ($conditionChecker) {
             if (!$this->currentUser) {
