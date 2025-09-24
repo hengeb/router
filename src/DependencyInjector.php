@@ -123,7 +123,6 @@ class DependencyInjector {
 
             // inject parameters from request body
             foreach ($parameter->getAttributes(RequestValue::class) as $attribute) {
-                error_log(var_export($parameterName, true));
                 $requestValue = $attribute->newInstance();
                 $key = $requestValue->name ?: $parameterName;
                 $identifier = $requestValue->identifier ?: null;
