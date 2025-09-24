@@ -225,7 +225,7 @@ class Router {
         $method = new \ReflectionMethod($controller, $functionName);
         if (!$this->responseType) {
             $this->responseType = match ((string) $method->getReturnType()) {
-                JsonResponse::class => ResponseType::Json,
+                JsonResponse::class, 'array' => ResponseType::Json,
                 default => ResponseType::Html,
             };
         }
@@ -238,6 +238,13 @@ class Router {
             $conditionChecker->assertOrThrow($this->currentUser, $args);
         }
         $response = $method->invokeArgs($controller, $args);
+
+        if (is_array($response)) {
+            $response = new JsonResponse($response);
+        } elseif (is_string($response)) {
+            $response = new Response($response);
+        }
+
         return $response;
     }
 }
