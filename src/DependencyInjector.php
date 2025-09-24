@@ -10,6 +10,7 @@ namespace Hengeb\Router;
 
 use Hengeb\Router\Attribute\Inject;
 use Hengeb\Router\Attribute\RequestValue;
+use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Interface\RetrievableModel;
 use Symfony\Component\HttpFoundation\ParameterBag;
 
@@ -122,6 +123,7 @@ class DependencyInjector {
 
             // inject parameters from request body
             foreach ($parameter->getAttributes(RequestValue::class) as $attribute) {
+                error_log(var_export($parameterName, true));
                 $requestValue = $attribute->newInstance();
                 $key = $requestValue->name ?: $parameterName;
                 $identifier = $requestValue->identifier ?: null;
