@@ -11,6 +11,7 @@ namespace Hengeb\Router;
 use Hengeb\Router\Attribute\Inject;
 use Hengeb\Router\Attribute\RequestValue;
 use Hengeb\Router\Exception\InvalidUserDataException;
+use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Interface\RetrievableModel;
 use Symfony\Component\HttpFoundation\ParameterBag;
 
