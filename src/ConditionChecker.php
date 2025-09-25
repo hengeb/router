@@ -147,12 +147,17 @@ class ConditionChecker {
         foreach ($conditions as $condition) {
             foreach ($condition as $propertyName => $valueTemplate) {
                 $negate = false;
-                if ($valueTemplate && $valueTemplate[0] === '!') {
-                    $negate = true;
-                    $valueTemplate = substr($valueTemplate, 1);
-                }
 
-                $value = $this->evaluateValueTemplate($valueTemplate, $args);
+                if (is_string($valueTemplate)) {
+                    if ($valueTemplate && $valueTemplate[0] === '!') {
+                        $negate = true;
+                        $valueTemplate = substr($valueTemplate, 1);
+                    }
+
+                    $value = $this->evaluateValueTemplate($valueTemplate, $args);
+                } else {
+                    $value = $valueTemplate;
+                }
                 $result = $this->getValueChecker($user, $propertyName)($value);
 
                 if ($negate) {

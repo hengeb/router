@@ -25,7 +25,7 @@ class AllowIf implements AccessAttribute {
      *             $currentUser->hasGroup($group->getName()) OR $currentUser->hasId($user->get("id")) is true
      *             where $group and $user have to be parameters of the routing method
      */
-    public function __construct(string ...$allow)
+    public function __construct(string|bool ...$allow)
     {
         $this->allow = $allow;
     }

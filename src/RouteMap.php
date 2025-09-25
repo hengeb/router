@@ -133,7 +133,7 @@ class RouteMap {
                 $routeInstance = $route->newInstance();
 
                 if (count($accessConditions) === 0) {
-                    throw new InvalidRouteException("route `{$routeInstance->matcher}` in `{$class->name}::{$method->name}` has no Access attribute. Use PublicAccess or RestrictedAccess or RequireLogin.");
+                    throw new InvalidRouteException("route `{$routeInstance->matcher}` in `{$class->name}::{$method->name}` has no Access attribute. Use PublicAccess or AllowIf or RequireLogin.");
                 }
                 if (in_array(PublicAccess::class, $accessConditions, true)) {
                     if (count($accessConditions) > 1) {
