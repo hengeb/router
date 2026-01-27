@@ -75,6 +75,12 @@ class Router {
         return $this;
     }
 
+    public function addServiceContainer(ServiceContainer $serviceContainer): self
+    {
+        $this->dependencyInjector->addServiceContainer($serviceContainer);
+        return $this;
+    }
+
     public function addExceptionHandler(string $exceptionClass, callable $handler): self
     {
         $this->exceptionHandlers[$exceptionClass] = $handler;

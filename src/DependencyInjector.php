@@ -31,6 +31,12 @@ class DependencyInjector {
      */
     private array $services = [];
 
+    /**
+     * service containers
+     * @var ServiceContainer[]
+     */
+    private array $serviceContainers = [];
+
     public function __construct()
     {
         $this->addType('string', fn($v) => "$v");
@@ -81,11 +87,29 @@ class DependencyInjector {
         $this->services[$className] = $objectOrRetriever;
     }
 
-    public function getService(string $className): object {
-        $objectOrRetriever = $this->services[$className]
-            ?? throw new \LogicException("unknown service: `$className`. Use \$router->addService($className::class, fn() => ...).");
+    public function addServiceContainer(ServiceContainer $serviceContainer): void
+    {
+        $this->serviceContainers[] = $serviceContainer;
+    }
 
-        return $objectOrRetriever instanceof \Closure ? $objectOrRetriever() : $objectOrRetriever;
+    public function getService(string $className): object
+    {
+        if (isset($this->services[$className])) {
+            $objectOrRetriever = $this->services[$className];
+            return $objectOrRetriever instanceof \Closure ? $objectOrRetriever() : $objectOrRetriever;
+        }
+
+        if ($this->serviceContainers) {
+            foreach ($this->serviceContainers as $container) {
+                try {
+                    return $container->getService($className);
+                } catch (\OutOfBoundsException $e) {
+                    continue;
+                }
+            }
+        }
+
+        throw new \LogicException("unknown service: `$className`. Use \$router->addService($className::class, fn() => ...).");
     }
 
     public function createObject(string $className): object
