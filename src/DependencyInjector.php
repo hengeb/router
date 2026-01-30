@@ -39,20 +39,23 @@ class DependencyInjector {
 
     public function __construct()
     {
-        $this->addType('string', fn($v) => "$v");
-        $this->addType('mixed', fn($v) => $v);
-        $this->addType('', fn($v) => $v);
-        $this->addType('int', 'intval');
-        $this->addType('bool', 'boolval');
-        $this->addType('float', 'floatval');
-        $this->addType(\DateTimeImmutable::class, fn($v) => new \DateTimeImmutable($v));
-        $this->addType(\DateTime::class, fn($v) => new \DateTime($v));
-        $this->addType(\DateTimeInterface::class, fn($v) => new \DateTimeImmutable($v));
+        $this
+        ->addType('string', fn($v) => "$v")
+        ->addType('mixed', fn($v) => $v)
+        ->addType('', fn($v) => $v)
+        ->addType('int', 'intval')
+        ->addType('bool', 'boolval')
+        ->addType('float', 'floatval')
+        ->addType(\DateTimeImmutable::class, fn($v) => new \DateTimeImmutable($v))
+        ->addType(\DateTime::class, fn($v) => new \DateTime($v))
+        ->addType(\DateTimeInterface::class, fn($v) => new \DateTimeImmutable($v))
+        ;
     }
 
-    public function addType(string $type, callable $retriever, ?string $identifierName = null): void
+    public function addType(string $type, callable $retriever, ?string $identifierName = null): self
     {
         $this->types[] = [$type, $retriever, $identifierName];
+        return $this;
     }
 
     public function getModelRetriever(string $type, ?string $identifierName): callable {
@@ -82,14 +85,16 @@ class DependencyInjector {
         throw new \InvalidArgumentException('no retriever found for model ' . $type . ($identifier ? (' identified by $' . $identifierName) : ''));
     }
 
-    public function addService(string $className, object $objectOrRetriever): void
+    public function addService(string $className, object $objectOrRetriever): self
     {
         $this->services[$className] = $objectOrRetriever;
+        return $this;
     }
 
-    public function addServiceContainer(ServiceContainer $serviceContainer): void
+    public function addServiceContainer(ServiceContainer $serviceContainer): self
     {
         $this->serviceContainers[] = $serviceContainer;
+        return $this;
     }
 
     public function getService(string $className): object
