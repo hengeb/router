@@ -124,6 +124,7 @@ class LatteExtension extends \Latte\Extension {
             'csrfTokenTag' => fn() => new \Latte\Runtime\Html('<input type="hidden" name="_csrfToken" value="' . $this->router->createCsrfToken() . '">'),
             'currentUser' => fn() => $this->currentUser,
             'debugger' => fn() => Debugger::renderLoader(),
+            'now' => fn() => new \DateTimeImmutable(),
         ];
 	}
 
