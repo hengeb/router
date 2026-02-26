@@ -13,8 +13,6 @@ use Hengeb\Router\Router;
 use Hengeb\Router\LatteExtension;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
-use Tracy\Debugger;
-use Latte\Engine as Latte;
 
 /**
  * Service container
@@ -40,6 +38,7 @@ abstract class ServiceContainer {
             $latte = new \Latte\Engine;
             $latte->setTempDirectory('/tmp/latte');
             $latte->setLoader(new \Latte\Loaders\FileLoader($container->getTemplatesDir()));
+            $latte->addExtension(new \Latte\Bridges\Tracy\TracyExtension);
             $latte->addExtension($container->getService(LatteExtension::class));
             return $latte;
         })
@@ -114,7 +113,7 @@ abstract class ServiceContainer {
 
     public function startDebugger(): static
     {
-        Debugger::enable(str_ends_with(getenv('DOMAINNAME'), 'localhost') ? Debugger::Development : Debugger::Production);
+        \Tracy\Debugger::enable(str_ends_with(getenv('DOMAINNAME'), 'localhost') ? \Tracy\Debugger::Development : \Tracy\Debugger::Production);
         return $this;
     }
 
