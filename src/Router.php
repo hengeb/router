@@ -95,6 +95,7 @@ class Router {
             $this->addService($currentUser::class, $this->currentUser);
         }
 
+        $response = null;
         try {
             foreach ($this->routeMap->getRoutes() as $matcher => [$httpMethod, $pathPattern, $queryInfo, $controllerName, $functionName, $accessConditions, $checkCsrfToken]) {
                 if ($this->request->getMethod() !== $httpMethod || !preg_match($pathPattern, $this->request->getPathInfo(), $matches)) {
@@ -115,13 +116,16 @@ class Router {
                 $conditionChecker = new ConditionChecker($accessConditions);
 
                 $response = $this->call($controller, $functionName, $matches, $conditionChecker);
-                $this->addCsrfTokenHeader($response);
-                return $response;
+                break;
             }
-            throw new InvalidRouteException();
+            if (!$response) {
+                throw new InvalidRouteException();
+            }
         } catch (\Exception $e) {
-            return $this->handleException($controller ?? null, $e);
+            $response = $this->handleException($controller ?? null, $e);
         }
+        $this->addCsrfTokenHeader($response);
+        return $response;
     }
 
     /**
@@ -229,12 +233,10 @@ class Router {
             $controller = $this->dependencyInjector->createObject($controller);
         }
         $method = new \ReflectionMethod($controller, $functionName);
-        if (!$this->responseType) {
-            $this->responseType = match ((string) $method->getReturnType()) {
-                JsonResponse::class, 'array' => ResponseType::Json,
-                default => ResponseType::Html,
-            };
-        }
+        $this->responseType ??= (
+                $this->request->headers->get('accept') === 'application/json'
+                || in_array((string) $method->getReturnType(), [JsonResponse::class, 'array'])
+            ) ? ResponseType::Json : ResponseType::Html;
 
         $args = $this->dependencyInjector->getFunctionArguments($method, $matches);
         if ($conditionChecker) {
