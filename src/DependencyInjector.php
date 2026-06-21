@@ -13,6 +13,8 @@ use Hengeb\Router\Attribute\RequestValue;
 use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Interface\RetrievableModel;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Symfony\Component\HttpFoundation\FileBag;
 use Symfony\Component\HttpFoundation\ParameterBag;
 
 /**
@@ -157,8 +159,10 @@ class DependencyInjector {
                 $key = $requestValue->name ?: $parameterName;
                 $identifier = $requestValue->identifier ?: null;
 
-                $payload ??= $this->getService(ParameterBag::class);
-                if (!$payload->has($key)) {
+                $requestBody = $type?->getName() === UploadedFile::class
+                    ? ($fileBag ??= $this->getService(FileBag::class))
+                    : ($parameterBag ??= $this->getService(ParameterBag::class));
+                if (!$requestBody->has($key)) {
                     if ($parameter->isOptional()) {
                         $arg = $parameter->getDefaultValue();
                     } else {
@@ -166,10 +170,26 @@ class DependencyInjector {
                     }
                 } else {
                     $retriever = $this->getModelRetriever((string) $type?->getName(), $identifier);
-                    $arg = $retriever($payload->get($key));
+                    $arg = $retriever($requestBody->get($key));
                 }
                 $args[$parameterName] = $arg;
                 continue 2;
+            }
+
+            // inject uploaded files
+            if ($type?->getName() === UploadedFile::class) {
+                $fileBag ??= $this->getService(FileBag::class);
+                if (!$fileBag->has($parameterName)) {
+                    if ($parameter->isOptional()) {
+                        $arg = $parameter->getDefaultValue();
+                    } else {
+                        throw new InvalidUserDataException('Uploaded file ' . $parameterName . ' is missing in request body');
+                    }
+                } else {
+                    $arg = $fileBag->get($parameterName);
+                }
+                $args[$parameterName] = $arg;
+                continue;
             }
 
             // inject parameters from path and query string

@@ -16,6 +16,7 @@ use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
+use Symfony\Component\HttpFoundation\FileBag;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\ParameterBag;
 use Symfony\Component\HttpFoundation\Request;
@@ -29,8 +30,8 @@ class Router {
     private RouteMap $routeMap;
     private DependencyInjector $dependencyInjector;
 
-    private ?Request $request = null;
-    private ?CurrentUserInterface $currentUser = null;
+    public private(set) ?Request $request = null;
+    public private(set) ?CurrentUserInterface $currentUser = null;
 
     /**
      * @var Array<callable|string[]>
@@ -38,7 +39,7 @@ class Router {
     private array $exceptionHandlers = [];
     private ?\Exception $exception = null;
 
-    private ?ResponseType $responseType = null;
+    public private(set) ?ResponseType $responseType = null;
 
     public function __construct(string $controllerDir)
     {
@@ -49,6 +50,7 @@ class Router {
             ->addService(self::class, fn() => $this)
             ->addService(Request::class, fn() => $this->request)
             ->addService(ParameterBag::class, fn() => $this->request->getPayload())
+            ->addService(FileBag::class, fn() => $this->request->files)
             ->addService(\Exception::class, fn() => $this->exception)
             ->addService(CurrentUserInterface::class, fn() => $this->currentUser)
             ->addService(Session::class, function () {
