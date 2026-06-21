@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace Hengeb\Router;
 
 use Hengeb\Router\Attribute\Inject;
+use Hengeb\Router\Attribute\QueryValue;
 use Hengeb\Router\Attribute\RequestValue;
 use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
@@ -148,29 +149,34 @@ class DependencyInjector {
         \ReflectionMethod|\ReflectionFunction $method,
         array $matches = [],
     ): array {
+        static $request = $this->getService(Request::class);
+        static $query = $request->query;
+        static $requestBody = $request->getPayload();
+        static $files = $request->files;
+
         $args = [];
         foreach ($method->getParameters() as $i=>$parameter) {
             $parameterName = $parameter->getName();
             $type = $parameter->getType();
 
-            // inject parameters from request body
-            foreach ($parameter->getAttributes(RequestValue::class) as $attribute) {
-                $requestValue = $attribute->newInstance();
-                $key = $requestValue->name ?: $parameterName;
-                $identifier = $requestValue->identifier ?: null;
+            // inject parameters from query string (not in matches) and request body
+            foreach ([...$parameter->getAttributes(QueryValue::class), ...$parameter->getAttributes(RequestValue::class)] as $attribute) {
+                $attributeInstance = $attribute->newInstance();
+                $key = $attributeInstance->name ?: $parameterName;
+                $identifier = $attributeInstance->identifier ?: null;
 
-                $requestBody = $type?->getName() === UploadedFile::class
-                    ? ($fileBag ??= $this->getService(FileBag::class))
-                    : ($parameterBag ??= $this->getService(ParameterBag::class));
-                if (!$requestBody->has($key)) {
+                $bag = $attribute->getName() === QueryValue::class ? $query
+                    : ($type?->getName() === UploadedFile::class ? $files : $requestBody);
+
+                if (!$bag->has($key)) {
                     if ($parameter->isOptional()) {
                         $arg = $parameter->getDefaultValue();
                     } else {
-                        throw new InvalidUserDataException($key . ' is missing in request body');
+                        throw new InvalidUserDataException($key . ' is missing in query string or request body and has no default value');
                     }
                 } else {
                     $retriever = $this->getModelRetriever((string) $type?->getName(), $identifier);
-                    $arg = $retriever($requestBody->get($key));
+                    $arg = $retriever($bag->get($key));
                 }
                 $args[$parameterName] = $arg;
                 continue 2;
@@ -178,15 +184,14 @@ class DependencyInjector {
 
             // inject uploaded files
             if ($type?->getName() === UploadedFile::class) {
-                $fileBag ??= $this->getService(FileBag::class);
-                if (!$fileBag->has($parameterName)) {
+                if (!$files->has($parameterName)) {
                     if ($parameter->isOptional()) {
                         $arg = $parameter->getDefaultValue();
                     } else {
                         throw new InvalidUserDataException('Uploaded file ' . $parameterName . ' is missing in request body');
                     }
                 } else {
-                    $arg = $fileBag->get($parameterName);
+                    $arg = $files->get($parameterName);
                 }
                 $args[$parameterName] = $arg;
                 continue;
