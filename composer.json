@@ -1,6 +1,7 @@
 {
     "name": "hengeb/router",
     "description": "a PHP router that makes use of attributes",
+    "type": "library",
     "license": "MIT",
     "authors": [
         {
@@ -12,7 +13,12 @@
     ],
     "require": {
         "php": ">=8.4.0",
-        "symfony/http-foundation": ">=7.0"
+        "symfony/http-foundation": "^7.0 || ^8.0"
+    },
+    "suggest": {
+        "latte/latte": "Required for ServiceContainer and LatteExtension",
+        "tracy/tracy": "Required for ServiceContainer::startDebugger() and the Tracy extension of the Latte engine",
+        "hengeb/db": "Required for the default Db service of ServiceContainer"
     },
     "autoload": {
         "psr-4": {"Hengeb\\Router\\": "src"}

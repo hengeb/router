@@ -14,9 +14,8 @@ use Hengeb\Router\Attribute\RequestValue;
 use Hengeb\Router\Exception\InvalidUserDataException;
 use Hengeb\Router\Exception\NotFoundException;
 use Hengeb\Router\Interface\RetrievableModel;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
-use Symfony\Component\HttpFoundation\FileBag;
-use Symfony\Component\HttpFoundation\ParameterBag;
 
 /**
  * Dependency Injector
@@ -44,6 +43,7 @@ class DependencyInjector {
     {
         $this
         ->addType('string', fn($v) => "$v")
+        ->addType(UploadedFile::class, fn($v) => $v)
         ->addType('mixed', fn($v) => $v)
         ->addType('', fn($v) => $v)
         ->addType('int', 'intval')
@@ -85,7 +85,7 @@ class DependencyInjector {
             return fn($value) => $type::retrieveModel($value, $identifierName);
         }
 
-        throw new \InvalidArgumentException('no retriever found for model ' . $type . ($identifier ? (' identified by $' . $identifierName) : ''));
+        throw new \InvalidArgumentException('no retriever found for model ' . $type . ($identifierName ? (' identified by $' . $identifierName) : ''));
     }
 
     public function addService(string $className, object $objectOrRetriever): self
@@ -104,7 +104,8 @@ class DependencyInjector {
     {
         if (isset($this->services[$className])) {
             $objectOrRetriever = $this->services[$className];
-            return $objectOrRetriever instanceof \Closure ? $objectOrRetriever() : $objectOrRetriever;
+            $service = $objectOrRetriever instanceof \Closure ? $objectOrRetriever() : $objectOrRetriever;
+            return $service ?? throw new \LogicException("service `$className` is not available (yet)");
         }
 
         if ($this->serviceContainers) {
@@ -118,6 +119,30 @@ class DependencyInjector {
         }
 
         throw new \LogicException("unknown service: `$className`. Use \$router->addService($className::class, fn() => ...).");
+    }
+
+    /**
+     * @return string name of the type without the nullable marker, '' if there is no type
+     * @throws \LogicException for union and intersection types (except nullable types like `?Foo` and `Foo|null`)
+     */
+    private function getTypeName(?\ReflectionType $type): string
+    {
+        if ($type === null) {
+            return '';
+        }
+        if ($type instanceof \ReflectionNamedType) {
+            return $type->getName();
+        }
+        if ($type instanceof \ReflectionUnionType) {
+            $names = array_filter(
+                array_map(fn(\ReflectionNamedType $t) => $t->getName(), $type->getTypes()),
+                fn($name) => $name !== 'null',
+            );
+            if (count($names) === 1) {
+                return reset($names);
+            }
+        }
+        throw new \LogicException('union and intersection types are not supported for injection: ' . $type);
     }
 
     public function createObject(string $className): object
@@ -136,7 +161,7 @@ class DependencyInjector {
             if (!count($property->getAttributes(Inject::class))) {
                 continue;
             }
-            $object->{$property->name} = $this->getService((string) $property->getType());
+            $object->{$property->name} = $this->getService($this->getTypeName($property->getType()));
         }
 
         return $object;
@@ -149,15 +174,14 @@ class DependencyInjector {
         \ReflectionMethod|\ReflectionFunction $method,
         array $matches = [],
     ): array {
-        static $request = $this->getService(Request::class);
-        static $query = $request->query;
-        static $requestBody = $request->getPayload();
-        static $files = $request->files;
+        // the request is only needed (and may only exist) for some kinds of arguments
+        $request = null;
+        $getRequest = fn(): Request => $request ??= $this->getService(Request::class);
 
         $args = [];
         foreach ($method->getParameters() as $i=>$parameter) {
             $parameterName = $parameter->getName();
-            $type = $parameter->getType();
+            $typeName = $this->getTypeName($parameter->getType());
 
             // inject parameters from query string (not in matches) and request body
             foreach ([...$parameter->getAttributes(QueryValue::class), ...$parameter->getAttributes(RequestValue::class)] as $attribute) {
@@ -165,8 +189,8 @@ class DependencyInjector {
                 $key = $attributeInstance->name ?: $parameterName;
                 $identifier = $attributeInstance->identifier ?: null;
 
-                $bag = $attribute->getName() === QueryValue::class ? $query
-                    : ($type?->getName() === UploadedFile::class ? $files : $requestBody);
+                $bag = $attribute->getName() === QueryValue::class ? $getRequest()->query
+                    : ($typeName === UploadedFile::class ? $getRequest()->files : $getRequest()->getPayload());
 
                 if (!$bag->has($key)) {
                     if ($parameter->isOptional()) {
@@ -175,7 +199,7 @@ class DependencyInjector {
                         throw new InvalidUserDataException($key . ' is missing in query string or request body and has no default value');
                     }
                 } else {
-                    $retriever = $this->getModelRetriever((string) $type?->getName(), $identifier);
+                    $retriever = $this->getModelRetriever($typeName, $identifier);
                     $arg = $retriever($bag->get($key));
                 }
                 $args[$parameterName] = $arg;
@@ -183,7 +207,8 @@ class DependencyInjector {
             }
 
             // inject uploaded files
-            if ($type?->getName() === UploadedFile::class) {
+            if ($typeName === UploadedFile::class) {
+                $files = $getRequest()->files;
                 if (!$files->has($parameterName)) {
                     if ($parameter->isOptional()) {
                         $arg = $parameter->getDefaultValue();
@@ -209,7 +234,7 @@ class DependencyInjector {
                 if ($parameterName !== $name) {
                     continue;
                 }
-                $retriever = $this->getModelRetriever((string)$type, $identifierName);
+                $retriever = $this->getModelRetriever($typeName, $identifierName);
                 $arg = $retriever($value);
                 if ($arg === null || $arg === []) {
                     throw new NotFoundException();
@@ -219,7 +244,7 @@ class DependencyInjector {
             }
 
             // inject services (or throw LogicException)
-            $args[$parameterName] = $this->getService((string)$type);
+            $args[$parameterName] = $this->getService($typeName);
         }
         return $args;
     }

@@ -23,7 +23,7 @@ class RouteMap {
 
     /**
      * contains the routes
-     * [matcher  => [HTTP method, path regex, query info, Controller class, function name, allow rules, check csrf token]]
+     * ["METHOD matcher" => [HTTP method, path regex, query info, Controller class, function name, allow rules, check csrf token]]
      */
     private array $routes = [];
 
@@ -49,14 +49,20 @@ class RouteMap {
     private function loadRoutesFromCacheOrBuild(): void
     {
         $files = $this->collectFiles($this->controllerDir);
+        ksort($files);
 
-        if (!is_file($this->cacheFile) || max($files) >= filemtime($this->cacheFile)) {
-            $this->buildRoutes(array_keys($files));
-            $this->writeCache();
-            $this->writeCacheReadable();
-        } else {
-            $this->routes = unserialize(file_get_contents($this->cacheFile));
+        if (is_file($this->cacheFile) && ($files === [] || max($files) < filemtime($this->cacheFile))) {
+            // the cache only contains scalars and arrays, so no objects are allowed
+            $routes = unserialize((string) file_get_contents($this->cacheFile), ['allowed_classes' => false]);
+            if (is_array($routes)) {
+                $this->routes = $routes;
+                return;
+            }
         }
+
+        $this->buildRoutes(array_keys($files));
+        $this->writeCache();
+        $this->writeCacheReadable();
     }
 
     /**
@@ -64,7 +70,10 @@ class RouteMap {
      */
     private function collectFiles(string $directory): array
     {
-        $dir = dir($directory);
+        $dir = is_dir($directory) ? dir($directory) : false;
+        if (!$dir) {
+            throw new \InvalidArgumentException("controller directory `$directory` does not exist");
+        }
         $files = [];
         while (false !== ($file = $dir->read())) {
             if ($file[0] === '.') {
@@ -84,14 +93,29 @@ class RouteMap {
     private function getClassFromFile(string $file): string
     {
         $namespace = '';
-        $tokens = token_get_all(file_get_contents($file));
+        $tokens = array_values(array_filter(
+            token_get_all(file_get_contents($file)),
+            fn($token) => !is_array($token) || !in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true),
+        ));
 
         foreach ($tokens as $i => $token) {
+            if (!is_array($token)) {
+                continue;
+            }
             if ($token[0] === T_NAMESPACE) {
-                $namespace = $tokens[$i+2][1];
+                $next = $tokens[$i + 1] ?? null;
+                $namespace = is_array($next) && in_array($next[0], [T_STRING, T_NAME_QUALIFIED], true) ? $next[1] : '';
             } elseif ($token[0] === T_CLASS) {
-                $class = $tokens[$i+2][1];
-                return $namespace ? "$namespace\\$class" : $class;
+                $previous = $tokens[$i - 1] ?? null;
+                // skip `Foo::class` and `new class`
+                if (is_array($previous) && in_array($previous[0], [T_DOUBLE_COLON, T_NEW], true)) {
+                    continue;
+                }
+                $next = $tokens[$i + 1] ?? null;
+                if (!is_array($next) || $next[0] !== T_STRING) {
+                    continue;
+                }
+                return $namespace ? "$namespace\\{$next[1]}" : $next[1];
             }
         }
 
@@ -105,6 +129,9 @@ class RouteMap {
 
         foreach ($classes as $classname) {
             $class = new \ReflectionClass($classname);
+            if ($class->isAbstract()) {
+                continue;
+            }
             $this->addRoutesFromClass($class);
         }
 
@@ -169,24 +196,39 @@ class RouteMap {
         }
         [$pathPattern, $queryInfo] = $this->createPattern($matcher);
         $checkCsrfToken ??= $httpMethod !== 'GET';
-        $this->routes[$httpMethod . ' ' . $matcher] = [$httpMethod, $pathPattern, $queryInfo, $controller, $methodName, $accessConditions, $checkCsrfToken];
+        $key = $httpMethod . ' ' . $matcher;
+        if (isset($this->routes[$key])) {
+            throw new InvalidRouteException("route `$key` in `$controller::$methodName` is already defined in `{$this->routes[$key][3]}::{$this->routes[$key][4]}`.");
+        }
+        $this->routes[$key] = [$httpMethod, $pathPattern, $queryInfo, $controller, $methodName, $accessConditions, $checkCsrfToken];
     }
 
     private function writeCache(): void
     {
-        $fp = fopen($this->cacheFile, 'w');
-        fwrite($fp, serialize($this->routes));
-        fclose($fp);
+        $this->writeFileAtomically($this->cacheFile, serialize($this->routes));
     }
 
     private function writeCacheReadable(): void
     {
-        $fp = fopen($this->cacheFile . '.php', 'w');
-        fwrite($fp, "<?php\nreturn " . var_export($this->routes, true) . ";");
-        fclose($fp);
+        $this->writeFileAtomically($this->cacheFile . '.php', "<?php\nreturn " . var_export($this->routes, true) . ";");
     }
 
-    public function createPattern(string $matcher) {
+    /**
+     * write to a temporary file first so concurrent requests never read a half-written file
+     */
+    private function writeFileAtomically(string $file, string $content): void
+    {
+        $temporaryFile = tempnam(dirname($file), basename($file) . '.');
+        if ($temporaryFile === false || file_put_contents($temporaryFile, $content) === false || !rename($temporaryFile, $file)) {
+            if ($temporaryFile !== false) {
+                @unlink($temporaryFile);
+            }
+            throw new \RuntimeException("cannot write route cache file `$file`");
+        }
+    }
+
+    public function createPattern(string $matcher): array
+    {
         $queryInfo = [];
         if (str_contains($matcher, '?')) {
             [$matcher, $queryMatcher] = explode('?', $matcher, 2);
@@ -199,11 +241,29 @@ class RouteMap {
         return [$pathPattern, $queryInfo];
     }
 
-    private function substituteNamedParametersInMatcher(string $matcher): string {
-        $matcher = preg_replace('/\{([^:]+?)\}/', '(?P<$1>[^\/]*?)', $matcher);
-        $matcher = preg_replace('/\{(.+?):(.+?)\}/', '(?P<$2>$1)', $matcher);
-        $matcher = preg_replace('/\(\?P\<(.+?)=\>(.+?)\>/', '(?P<$2__identifiedBy__$1>', $matcher);
-        return $matcher;
+    /**
+     * replaces the placeholders `{name}`, `{regex:name}`, `{name=>identifier}` and `{regex:name=>identifier}`
+     * by named capture groups (the regex may contain one level of braces like {[0-9]{2}:id});
+     * braces that do not form a placeholder, e.g. quantifiers like {2,3}, are left untouched
+     */
+    private function substituteNamedParametersInMatcher(string $matcher): string
+    {
+        return preg_replace_callback('/\{((?:[^{}]|\{[^{}]*\})+)\}/', function (array $m): string {
+            $namePattern = '[A-Za-z_]\w*(?:=>[A-Za-z_]\w*)?';
+            $regex = '[^\/]*?';
+            if (preg_match("/^(.*):($namePattern)$/s", $m[1], $parts)) {
+                [, $regex, $name] = $parts;
+            } elseif (preg_match("/^$namePattern$/", $m[1])) {
+                $name = $m[1];
+            } else {
+                return $m[0];
+            }
+            if (str_contains($name, '=>')) {
+                [$identifier, $name] = explode('=>', $name, 2);
+                $name .= '__identifiedBy__' . $identifier;
+            }
+            return "(?P<$name>$regex)";
+        }, $matcher);
     }
 
     /**
@@ -220,18 +280,14 @@ class RouteMap {
                 continue;
             }
             [$key, $matcher] = explode('=', $key_matcher, 2);
-            $matcher = $this->substituteNamedParametersInMatcher($matcher);
-            $pattern = '(^' . $matcher . '$)';
-            $queryInfo[$key] = $this->substituteNamedParametersInMatcher($pattern);
+            $queryInfo[$key] = '(^' . $this->substituteNamedParametersInMatcher($matcher) . '$)';
         }
 
         return $queryInfo;
     }
 
     private function sortRoutes(): void {
-        // sort by controller name, query info length DESC, preserve pre-order
-        uasort($this->routes, function (array $a, array $b) {
-            return $a[3] <=> $b[3] ?: count($b[2]) <=> count($a[2]);
-        });
+        // routes with more query conditions are more specific and come first; otherwise preserve the order (uasort is stable)
+        uasort($this->routes, fn(array $a, array $b) => count($b[2]) <=> count($a[2]));
     }
 }

@@ -19,7 +19,7 @@ location / {
 In `index.php`, create the Router object and dispatch the request:
 
 ```php
-use App\Service\Router\Router;
+use Hengeb\Router\Router;
 use Symfony\Component\HttpFoundation\Request;
 
 require_once '../vendor/autoload.php';
@@ -64,7 +64,7 @@ class MyController extends Controller {
 
     // you can use identifiers in the path or in the query, they will be passed as arguments and casted to the desired type
     // the Db object will be injected (in this case via the Db::getInstance() method)
-    #[Route('GET /(search|)?q={query}', PublicAccess]
+    #[Route('GET /(search|)?q={query}'), PublicAccess]
     public function search(string $query, Db $db): Response {
         $sql = $this->buildQuery($query);
         $results = $db->query($sql);
@@ -131,11 +131,11 @@ $router->addType(User::class, fn($id) => User::find($id), 'id')
 
 The third parameter is optional. Use it if there are multiple ways to find the target.
 
-Alternatively your model can implement the RetrievabelModel interface that is part of this package.
+Alternatively your model can implement the RetrievableModel interface that is part of this package.
 
 ```php
 class User implements RetrievableModel {
-    public function retrieveModel($userId): ?static {
+    public static function retrieveModel(mixed $userId, string $identifierName = 'id'): ?static {
         return UserRepository::getInstance()->findOneById((int)$userId);
     }
 }
@@ -160,7 +160,7 @@ $router->addService(TemplateEngine::class, fn() => new TemplateEngine());
 
 If something goes wrong a default error page will be shown with a short description of the error and the according HTTP status code.
 
-You can add a method `handleException(\Exception $e, ...)` (other dependcies will be injected) to your controller to handle the exception.
+You can add a method `handleException(\Throwable $e, ...)` (other dependencies will be injected) to your controller to handle the exception.
 
 However, this will not work if no controller could be determined because no route matches request. To cover this case you can add a custom exception handler:
 
@@ -173,5 +173,5 @@ The object will be created with service injection.
 Alternatively you can use a closure:
 
 ```php
-$router->addExceptionHandler(InvalidRouteException::class, fn(\Exception $e) => die($e->getMessage()));
+$router->addExceptionHandler(InvalidRouteException::class, fn(\Throwable $e) => die($e->getMessage()));
 ```

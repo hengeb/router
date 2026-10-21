@@ -1,16 +1,17 @@
 <?php
+/**
+ * @author Henrik Gebauer <code@henrik-gebauer.de>
+ * @license https://opensource.org/license/mit MIT
+ */
+
 declare(strict_types=1);
+
 namespace Hengeb\Router;
 
 use Hengeb\Router\Attribute\RequireLogin;
 use Hengeb\Router\Exception\AccessDeniedException;
 use Hengeb\Router\Exception\NotLoggedInException;
 use Hengeb\Router\Interface\CurrentUserInterface;
-
-/**
- * @author Henrik Gebauer <code@henrik-gebauer.de>
- * @license https://opensource.org/license/mit MIT
- */
 
 /**
  * condition checker
@@ -56,32 +57,30 @@ class ConditionChecker {
                     if ($token === '!') {
                         $not = true;
                         continue;
-                    } else {
-                        $not = false;
                     }
                     if ($token === '-') {
                         $factor = -1;
                         continue;
-                    } else {
-                        $factor = 1;
                     }
                     $callArgs[] = match($token[0]) {
                         T_CONSTANT_ENCAPSED_STRING => substr($token[1], 1, -1),
-                        T_VARIABLE => match (gettype($arg = $args[substr($token[1], 1)] ?? throw new \LogicException("missing argument: {$token[1]}"))) {
-                            'bool' => $not ^ $arg,
-                            'int', 'float' => $factor * $arg,
-                            default => $arg,
+                        T_VARIABLE => match (gettype($callArg = $args[substr($token[1], 1)] ?? throw new \LogicException("missing argument: {$token[1]}"))) {
+                            'boolean' => $not ? !$callArg : $callArg,
+                            'integer', 'double' => $factor * $callArg,
+                            default => $callArg,
                         },
                         T_LNUMBER => $factor * intval($token[1]),
                         T_DNUMBER => $factor * floatval($token[1]),
                         T_STRING => match ($token[1]) {
                             'null' => null,
-                            'true' => $not ^ true,
-                            'false' => $not ^ false,
+                            'true' => !$not,
+                            'false' => $not,
                             default => throw new \InvalidArgumentException("not supported: " . $token[1]),
                         },
                         default => throw new \InvalidArgumentException("not supported: " . $token[1]),
                     };
+                    $not = false;
+                    $factor = 1;
                 }
                 $value = $arg->$methodName(...$callArgs);
         }

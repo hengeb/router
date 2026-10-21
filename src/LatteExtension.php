@@ -17,7 +17,7 @@ class LatteExtension extends \Latte\Extension {
     private array $timezones = [];
     public \DateTimeZone $timezone {
         set(string|\DateTimeZone $value) {
-            $this->timezone = !is_string($value) ? $value : ($this->timezones[$value] ?? new \DateTimeZone($value));
+            $this->timezone = !is_string($value) ? $value : ($this->timezones[$value] ??= new \DateTimeZone($value));
         }
     }
 
@@ -29,17 +29,17 @@ class LatteExtension extends \Latte\Extension {
         $this->timezone = 'UTC';
     }
 
-	/**
-	 * Returns a list of |filters.
-	 * @return array<string, callable>
-	 */
-	public function getFilters(): array
-	{
-		return [
+    /**
+     * Returns a list of |filters.
+     * @return array<string, callable>
+     */
+    public function getFilters(): array
+    {
+        return [
             'timezone' => $this->timezoneFilter(...),
             'format' => $this->dateformat(...),
         ];
-	}
+    }
 
     /**
      * change timezone of \DateTimeInterface object
@@ -62,15 +62,21 @@ class LatteExtension extends \Latte\Extension {
             }
         }
 
-        if (!$datetime instanceof \DateTimeInterface) {
-            if (is_int($datetime) || ctype_digit($datetime)) {
-                $datetime = \DateTimeImmutable::createFromTimestamp((int)$datetime);
-            } else {
-                $datetime = new \DateTimeImmutable($datetime, $this->timezones['UTC']);
-            }
-        }
+        return $this->toDateTime($datetime)->setTimeZone($timezone);
+    }
 
-        return $datetime->setTimeZone($timezone);
+    /**
+     * converts a timestamp or a date string (interpreted as UTC) to a \DateTimeInterface
+     */
+    private function toDateTime(string|int|\DateTimeInterface $datetime): \DateTimeInterface
+    {
+        if ($datetime instanceof \DateTimeInterface) {
+            return $datetime;
+        }
+        if (is_int($datetime) || ctype_digit($datetime)) {
+            return \DateTimeImmutable::createFromTimestamp((int)$datetime);
+        }
+        return new \DateTimeImmutable($datetime, $this->timezones['UTC'] ??= new \DateTimeZone('UTC'));
     }
 
     /**
@@ -88,13 +94,7 @@ class LatteExtension extends \Latte\Extension {
             return null;
         }
 
-        if (!$datetime instanceof \DateTimeInterface) {
-            if (is_int($datetime) || ctype_digit($datetime)) {
-                $datetime = new \DateTimeImmutable('@' . $datetime); // PHP 8.4: \DateTimeImmutable::createFromTimestamp
-            } else {
-                $datetime = new \DateTimeImmutable($datetime, $this->timezones['UTC']);
-            }
-        }
+        $datetime = $this->toDateTime($datetime);
 
         $timezone = null; // null: no change
         if (str_contains($format, '@')) {
@@ -113,12 +113,12 @@ class LatteExtension extends \Latte\Extension {
         return $datetime->format($format);
     }
 
-	/**
-	 * Returns a list of functions used in templates.
-	 * @return array<string, callable>
-	 */
-	public function getFunctions(): array
-	{
+    /**
+     * Returns a list of functions used in templates.
+     * @return array<string, callable>
+     */
+    public function getFunctions(): array
+    {
         return [
             'csrfToken' => fn() => $this->router->createCsrfToken(),
             'csrfTokenTag' => fn() => new \Latte\Runtime\Html('<input type="hidden" name="_csrfToken" value="' . $this->router->createCsrfToken() . '">'),
@@ -126,20 +126,20 @@ class LatteExtension extends \Latte\Extension {
             'debugger' => fn() => Debugger::renderLoader(),
             'now' => fn() => new \DateTimeImmutable(),
         ];
-	}
+    }
 
-	/**
-	 * Returns a list of providers.
-	 * @return array<mixed>
-	 */
-	public function getProviders(): array
-	{
-		return [
+    /**
+     * Returns a list of providers.
+     * @return array<mixed>
+     */
+    public function getProviders(): array
+    {
+        return [
             'coreParentFinder' => function (\Latte\Runtime\Template $template) {
                 if (!$template->getReferenceType()) {
                     return '../layout.latte';
                 }
             },
         ];
-	}
+    }
 }

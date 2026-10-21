@@ -8,5 +8,4 @@ declare(strict_types=1);
 
 namespace Hengeb\Router\Attribute;
 
-#[\Attribute(\Attribute::TARGET_METHOD)]
 interface AccessAttribute {}

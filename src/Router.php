@@ -27,6 +27,9 @@ use Symfony\Component\HttpFoundation\Session\Session;
  * Router
  */
 class Router {
+    private const CSRF_TOKEN_LIMIT = 200;
+    private const CSRF_TOKEN_LIFETIME = 3600;
+
     private RouteMap $routeMap;
     private DependencyInjector $dependencyInjector;
 
@@ -37,7 +40,7 @@ class Router {
      * @var Array<callable|string[]>
      */
     private array $exceptionHandlers = [];
-    private ?\Exception $exception = null;
+    private ?\Throwable $exception = null;
 
     public private(set) ?ResponseType $responseType = null;
 
@@ -52,6 +55,7 @@ class Router {
             ->addService(ParameterBag::class, fn() => $this->request->getPayload())
             ->addService(FileBag::class, fn() => $this->request->files)
             ->addService(\Exception::class, fn() => $this->exception)
+            ->addService(\Throwable::class, fn() => $this->exception)
             ->addService(CurrentUserInterface::class, fn() => $this->currentUser)
             ->addService(Session::class, function () {
                 if (!$this->request) {
@@ -92,6 +96,7 @@ class Router {
     public function dispatch(Request $request, ?CurrentUserInterface $currentUser = null): Response {
         $this->request = $request;
         $this->currentUser = $currentUser;
+        $this->responseType = null;
 
         if ($currentUser) {
             $this->addService($currentUser::class, $this->currentUser);
@@ -104,14 +109,21 @@ class Router {
                     continue;
                 }
                 foreach ($queryInfo as $parameterName => $parameterPattern) {
-                    if (!$this->request->query->has($parameterName) || !preg_match($parameterPattern, $this->request->query->getString($parameterName), $parameterMatches)) {
+                    if (!$this->request->query->has($parameterName)) {
+                        continue 2;
+                    }
+                    // no pattern: the parameter only has to be present
+                    if ($parameterPattern === null) {
+                        continue;
+                    }
+                    if (!preg_match($parameterPattern, $this->request->query->getString($parameterName), $parameterMatches)) {
                         continue 2;
                     }
                     $matches += $parameterMatches;
                 }
 
                 if ($checkCsrfToken) {
-                    $this->checkCsrfToken($this->request->getPayload()->get('_csrfToken'));
+                    $this->checkCsrfToken();
                 }
 
                 $controller = $this->dependencyInjector->createObject($controllerName);
@@ -123,7 +135,7 @@ class Router {
             if (!$response) {
                 throw new InvalidRouteException();
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $response = $this->handleException($controller ?? null, $e);
         }
         $this->addCsrfTokenHeader($response);
@@ -131,7 +143,7 @@ class Router {
     }
 
     /**
-     * create a CSRF token and keep track of the recent 50 tokens in the session
+     * create a CSRF token and keep track of the recent tokens in the session
      */
     public function createCsrfToken(): string
     {
@@ -139,8 +151,8 @@ class Router {
         $token = bin2hex(random_bytes(32));
         $csrfTokens = $session->get('csrfTokens', []);
         $csrfTokens[$token] = time();
-        // limit to a maximum of 50 tokens in the storage
-        $csrfTokens = array_slice($csrfTokens, -50);
+        // limit the number of tokens in the storage
+        $csrfTokens = array_slice($csrfTokens, -self::CSRF_TOKEN_LIMIT, null, true);
         $session->set('csrfTokens', $csrfTokens);
         return $token;
     }
@@ -159,10 +171,13 @@ class Router {
         if (!$token) {
             $token = $this->request->headers->get('X-CSRF-Token');
         }
+        if (!is_string($token)) {
+            throw new InvalidCsrfTokenException();
+        }
         $session = $this->dependencyInjector->getService(Session::class);
         $csrfTokens = $session->get('csrfTokens', []);
-        // invalidate tokens after 1 hour
-        $csrfTokens = array_filter($csrfTokens, fn($time) => $time + 3600 > time());
+        // invalidate expired tokens
+        $csrfTokens = array_filter($csrfTokens, fn($time) => $time + self::CSRF_TOKEN_LIFETIME > time());
         if (!isset($csrfTokens[$token])) {
             throw new InvalidCsrfTokenException();
         }
@@ -170,37 +185,47 @@ class Router {
         $session->set('csrfTokens', $csrfTokens);
     }
 
-    private function handleException(?object $controller, \Exception $e): Response
+    private function handleException(?object $controller, \Throwable $e): Response
     {
         $this->exception = $e;
 
         // stop possible output buffering (e.g. if the exception was thrown during the rendering of a template)
-        ob_end_clean();
-        if ($controller && method_exists($controller, 'handleException')) {
-            return $this->call($controller, 'handleException');
+        while (ob_get_level() > 0) {
+            ob_end_clean();
         }
 
-        foreach ($this->exceptionHandlers as $exceptionClass => $handler) {
-            if (is_a($e::class, $exceptionClass, true)) {
-                if (is_array($handler)) {
-                    [$className, $methodName] = $handler;
-                    $controller = $this->dependencyInjector->createObject($className);
-                    return $this->call($controller, $methodName);
-                // closure
-                } else {
-                    $function = new \ReflectionFunction($handler);
-                    $args = $this->dependencyInjector->getFunctionArguments($function);
-                    return $function->invokeArgs($args);
+        try {
+            if ($controller && method_exists($controller, 'handleException')) {
+                return $this->call($controller, 'handleException');
+            }
+
+            foreach ($this->exceptionHandlers as $exceptionClass => $handler) {
+                if (is_a($e::class, $exceptionClass, true)) {
+                    if (is_array($handler)) {
+                        [$className, $methodName] = $handler;
+                        $handlerController = $this->dependencyInjector->createObject($className);
+                        return $this->call($handlerController, $methodName);
+                    // closure
+                    } else {
+                        $function = new \ReflectionFunction($handler);
+                        $args = $this->dependencyInjector->getFunctionArguments($function);
+                        return $function->invokeArgs($args);
+                    }
                 }
             }
+        } catch (\Throwable $handlerException) {
+            // the custom handler failed: fall back to the default handler for the new exception
+            $this->exception = $e = $handlerException;
         }
         return $this->defaultExceptionHandler($e);
     }
 
-    private function defaultExceptionHandler(\Exception $e): Response
+    private function defaultExceptionHandler(\Throwable $e): Response
     {
         $header = ['Content-Type' => 'text/plain; charset=utf-8'];
 
+        // only the messages of the router's own exceptions are meant for the client
+        $exposeMessage = true;
         [$message, $responseCode] = match (true) {
             $e instanceof InvalidRouteException => ['path not found', 404],
             $e instanceof NotLoggedInException => ['login required', 401],
@@ -208,14 +233,15 @@ class Router {
             $e instanceof AccessDeniedException => ['permission required', 403],
             $e instanceof InvalidCsrfTokenException => ['request cannot be repeated', 400],
             $e instanceof InvalidUserDataException => ['submitted data is missing or invalid', 400],
-            default => (function () use ($e): array {
+            default => (function () use ($e, &$exposeMessage): array {
+                $exposeMessage = false;
                 error_log($e->getMessage());
                 error_log($e->getTraceAsString());
                 return ['internal error', 500];
             })(),
         };
 
-        if ($e->getMessage()) {
+        if ($exposeMessage && $e->getMessage()) {
             $message = $e->getMessage();
             if ($e->getCode()) {
                 $message .= ' (code: ' . $e->getCode() . ')';
@@ -236,7 +262,7 @@ class Router {
         }
         $method = new \ReflectionMethod($controller, $functionName);
         $this->responseType ??= (
-                $this->request->headers->get('accept') === 'application/json'
+                $this->request->getPreferredFormat() === 'json'
                 || in_array((string) $method->getReturnType(), [JsonResponse::class, 'array'])
             ) ? ResponseType::Json : ResponseType::Html;
 

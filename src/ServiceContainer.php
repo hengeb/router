@@ -9,8 +9,6 @@ namespace Hengeb\Router;
 
 use Hengeb\Db\Db;
 use Hengeb\Router\Interface\CurrentUserInterface;
-use Hengeb\Router\Router;
-use Hengeb\Router\LatteExtension;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
 
@@ -36,7 +34,7 @@ abstract class ServiceContainer {
         $this
         ->registerService(\Latte\Engine::class, function(self $container): \Latte\Engine {
             $latte = new \Latte\Engine;
-            $latte->setTempDirectory('/tmp/latte');
+            $latte->setTempDirectory(sys_get_temp_dir() . '/latte');
             $latte->setLoader(new \Latte\Loaders\FileLoader($container->getTemplatesDir()));
             $latte->addExtension(new \Latte\Bridges\Tracy\TracyExtension);
             $latte->addExtension($container->getService(LatteExtension::class));
@@ -79,7 +77,7 @@ abstract class ServiceContainer {
                 }
             }
         }
-        return $this->instances[$class] ?: throw new \OutOfBoundsException('cannot create unknown service ' . $class);
+        return $this->instances[$class] ?? throw new \OutOfBoundsException('cannot create unknown service ' . $class);
     }
 
     public function getControllerDir(): string
@@ -113,7 +111,7 @@ abstract class ServiceContainer {
 
     public function startDebugger(): static
     {
-        \Tracy\Debugger::enable(str_ends_with(getenv('DOMAINNAME'), 'localhost') ? \Tracy\Debugger::Development : \Tracy\Debugger::Production);
+        \Tracy\Debugger::enable(str_ends_with((string) getenv('DOMAINNAME'), 'localhost') ? \Tracy\Debugger::Development : \Tracy\Debugger::Production);
         return $this;
     }
 
