@@ -28,7 +28,7 @@ use Symfony\Component\HttpFoundation\Session\Session;
  */
 class Router {
     private const CSRF_TOKEN_LIMIT = 200;
-    private const CSRF_TOKEN_LIFETIME = 3600;
+    private const CSRF_TOKEN_LIFETIME = 24 * 3600;
 
     private RouteMap $routeMap;
     private DependencyInjector $dependencyInjector;

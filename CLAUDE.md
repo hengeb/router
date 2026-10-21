@@ -7,7 +7,7 @@ PHP library (Composer package `hengeb/router`, namespace `Hengeb\Router`, PSR-4 
 `Router::dispatch(Request, ?CurrentUserInterface)`:
 1. `RouteMap::getRoutes()` returns the routes (cached, see below) in sorted order.
 2. Match on HTTP method + path regex, then all query patterns (`$queryInfo`); named matches are collected in `$matches`.
-3. If `$checkCsrfToken` is set → `Router::checkCsrfToken()` (token from payload `_csrfToken` or header `X-CSRF-Token`, stored in the session under `csrfTokens`, max. 200 tokens, valid for 1 h, single use). Default: enabled for all methods except GET, overridable with `#[CheckCsrfToken(bool)]`.
+3. If `$checkCsrfToken` is set → `Router::checkCsrfToken()` (token from payload `_csrfToken` or header `X-CSRF-Token`, stored in the session under `csrfTokens`, max. 200 tokens, valid for 24 h, single use). Default: enabled for all methods except GET, overridable with `#[CheckCsrfToken(bool)]`.
 4. `DependencyInjector::createObject()` creates the controller (constructor autowiring + `#[Inject]` properties).
 5. `Router::call()` determines the `ResponseType` (Json for `Accept: application/json` or return type `array`/`JsonResponse`), resolves the arguments, checks access via `ConditionChecker`, calls the method; `array` → `JsonResponse`, `string` → `Response`.
 6. Exceptions (`\Throwable`): `handleException()` on the controller → registered handlers (`addExceptionHandler`, array `[class, method]` or closure) → `defaultExceptionHandler` (plain-text response, status codes 400/401/403/404/500). Every response gets a fresh `X-CSRF-Token` header.
